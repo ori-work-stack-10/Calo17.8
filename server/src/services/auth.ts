@@ -1,850 +1,971 @@
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import crypto from "crypto";
-import { prisma } from "../lib/database";
-import { SignUpInput, SignInInput } from "../types/auth";
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Image,
+  StatusBar,
+  Switch,
+  ActivityIndicator,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
+import { useTranslation } from "react-i18next";
+import { useLanguage } from "@/src/i18n/context/LanguageContext";
+import {
+  User,
+  Bell,
+  Shield,
+  CircleHelp as HelpCircle,
+  LogOut,
+  ChevronLeft,
+  CreditCard as Edit,
+  Target,
+  Scale,
+  Activity,
+  Globe,
+  Moon,
+  ChevronRight,
+  Camera,
+  Image as ImageIcon,
+} from "lucide-react-native";
+import EditProfile from "@/components/EditProfile";
+import NotificationSettings from "@/components/NotificationSettings";
+import PrivacySettings from "@/components/PrivacySettings";
+import { useDispatch, useSelector } from "react-redux";
+import { AppDispatch, RootState } from "@/src/store";
+import { signOut } from "@/src/store/authSlice";
+import { router } from "expo-router";
+import { userAPI } from "@/src/services/api";
+import * as ImagePicker from "expo-image-picker";
+import { Alert } from "react-native";
 
-const JWT_SECRET = process.env.JWT_SECRET!;
-const JWT_EXPIRES_IN = "7d";
-const SESSION_EXPIRES_DAYS = 7;
-const PASSWORD_RESET_EXPIRES = "15m";
-
-const userSelectFields = {
-  user_id: true,
-  email: true,
-  name: true,
-  avatar_url: true,
-  subscription_type: true,
-  birth_date: true,
-  ai_requests_count: true,
-  ai_requests_reset_at: true,
-  created_at: true,
-  email_verified: true,
-  is_questionnaire_completed: true,
-};
-
-function generatePasswordResetToken(email: string) {
-  return jwt.sign(
-    {
-      email,
-      type: "password_reset",
-      timestamp: Date.now(), // Add timestamp for extra security
-    },
-    JWT_SECRET,
-    { expiresIn: PASSWORD_RESET_EXPIRES }
-  );
+// Define the interface for menu items
+interface MenuItem {
+  id: string;
+  title: string;
+  icon: React.ReactElement;
+  onPress?: () => void;
+  rightComponent?: React.ReactElement;
+  subtitle?: string;
+  danger?: boolean;
 }
 
-function verifyPasswordResetToken(token: string) {
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as {
-      email: string;
-      type: string;
-      timestamp: number;
-    };
-
-    if (decoded.type !== "password_reset") {
-      throw new Error("Invalid token type");
-    }
-
-    return decoded;
-  } catch (error) {
-    throw new Error("Invalid or expired password reset token");
-  }
+interface MenuSection {
+  title: string;
+  items: MenuItem[];
 }
 
-function generateToken(payload: object) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-}
+export default function ProfileScreen() {
+  const { t } = useTranslation();
+  const { isRTL } = useLanguage();
+  const dispatch = useDispatch<AppDispatch>();
+  const { user } = useSelector((state: RootState) => state.auth);
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [showLanguageModal, setShowLanguageModal] = useState(false);
+  const [notifications, setNotifications] = useState(true);
+  const [darkMode, setDarkMode] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [notificationSettings, setNotificationSettings] = useState({
+    pushNotifications: true,
+    emailNotifications: false,
+    mealReminders: true,
+    exerciseReminders: true,
+    waterReminders: false,
+    weeklyReports: true,
+    promotionalEmails: false,
+  });
 
-function getSessionExpiryDate() {
-  const date = new Date();
-  date.setDate(date.getDate() + SESSION_EXPIRES_DAYS);
-  return date;
-}
+  const handleSignOut = () => {
+    Alert.alert(
+      t("profile.signout") || "Sign Out",
+      t("profile.signout_confirmation") || "Are you sure you want to sign out?",
+      [
+        { text: t("common.cancel") || "Cancel", style: "cancel" },
+        {
+          text: t("profile.signout") || "Sign Out",
+          style: "destructive",
+          onPress: () => {
+            dispatch(signOut());
+          },
+        },
+      ]
+    );
+  };
 
-export class AuthService {
-  static async signUp(data: SignUpInput) {
-    const { email, name, password, birth_date } = data;
-
-    const existingUser = await prisma.user.findFirst({
-      where: { email },
-      select: {
-        email_verified: true,
-        email: true,
-        name: true,
+  const handleChangePlan = () => {
+    router.push({
+      pathname: "/payment",
+      params: {
+        mode: "change",
+        currentPlan: user?.subscription_type || "FREE",
       },
     });
+  };
 
-    if (existingUser) {
-      if (existingUser.email_verified) {
-        throw new Error(
-          "Email already registered and verified. Please sign in instead."
-        );
-      } else {
-        // User exists but email not verified - resend verification code
-        const emailVerificationCode = crypto
-          .randomInt(100000, 999999)
-          .toString();
+  const handleExitPlan = () => {
+    Alert.alert(
+      "Exit Current Plan",
+      "Are you sure you want to exit your current plan and downgrade to the Free plan? You will lose access to premium features.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Exit Plan",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await userAPI.updateSubscription("FREE");
+              dispatch({
+                type: "auth/updateSubscription",
+                payload: { subscription_type: "FREE" },
+              });
+              Alert.alert(
+                "Success",
+                "You have been downgraded to the Free plan."
+              );
+            } catch (error: any) {
+              Alert.alert("Error", error.message || "Failed to update plan");
+            }
+          },
+        },
+      ]
+    );
+  };
 
-        await prisma.user.update({
-          where: { email },
-          data: {
-            email_verification_code: emailVerificationCode,
-            email_verification_expires: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+  const handleNotificationToggle = (key: string) => {
+    setNotificationSettings((prev) => ({
+      ...prev,
+      [key]: !prev[key as keyof typeof prev],
+    }));
+    // Here you would typically save to AsyncStorage or send to server
+    console.log(
+      "🔔 Notification setting changed:",
+      key,
+      !notificationSettings[key as keyof typeof notificationSettings]
+    );
+  };
+
+  const handleDarkModeToggle = (value: boolean) => {
+    setDarkMode(value);
+    // Here you would typically apply the theme change
+    console.log("🌙 Dark mode toggled:", value);
+  };
+
+  const handleMenuPress = (itemId: string) => {
+    if (itemId === "language") {
+      setShowLanguageModal(true);
+    } else if (itemId === "personalData") {
+      router.push("/(tabs)/questionnaire?mode=edit");
+    } else if (itemId === "privacy") {
+      router.push("/privacy-policy");
+    } else {
+      setActiveSection(activeSection === itemId ? null : itemId);
+    }
+  };
+
+  const handleAvatarPress = () => {
+    Alert.alert(
+      "Change Avatar",
+      "Choose how you'd like to update your profile picture",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Take Photo", onPress: handleTakePhoto },
+        { text: "Choose from Gallery", onPress: handleChooseFromGallery },
+      ]
+    );
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission needed", "Camera permission is required");
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0].base64) {
+        await uploadAvatar(result.assets[0].base64);
+      }
+    } catch (error) {
+      console.error("Camera error:", error);
+      Alert.alert("Error", "Failed to take photo");
+    }
+  };
+
+  const handleChooseFromGallery = async () => {
+    try {
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission needed", "Gallery permission is required");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0].base64) {
+        await uploadAvatar(result.assets[0].base64);
+      }
+    } catch (error) {
+      console.error("Gallery error:", error);
+      Alert.alert("Error", "Failed to choose image");
+    }
+  };
+
+  const uploadAvatar = async (base64: string) => {
+    try {
+      setIsUploadingAvatar(true);
+
+      const response = await userAPI.uploadAvatar(base64);
+
+      if (response.success) {
+        // Update user in Redux store
+        dispatch({
+          type: "auth/setUser",
+          payload: {
+            ...user,
+            avatar_url: response.avatar_url,
           },
         });
 
-        await this.sendVerificationEmail(
-          email,
-          emailVerificationCode,
-          existingUser.name || name
-        );
-
-        return {
-          user: { email, name: existingUser.name || name },
-          needsEmailVerification: true,
-        };
+        console.log("✅ Avatar updated in Redux store:", response.avatar_url?.substring(0, 50) + "...");
+        Alert.alert("Success", "Profile picture updated successfully!");
+      } else {
+        throw new Error(response.error || "Failed to upload avatar");
       }
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 12);
-    const emailVerificationCode = crypto.randomInt(100000, 999999).toString();
-
-    const user = await prisma.user.create({
-      data: {
-        email,
-        name,
-        password_hash: hashedPassword,
-        subscription_type: "FREE",
-        birth_date: new Date(),
-        ai_requests_count: 0,
-        ai_requests_reset_at: new Date(),
-        email_verified: false,
-        email_verification_code: emailVerificationCode,
-        email_verification_expires: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
-      },
-      select: {
-        ...userSelectFields,
-        email_verified: true,
-        email_verification_code: true,
-      },
-    });
-
-    // Send verification email
-    await this.sendVerificationEmail(email, emailVerificationCode, name);
-
-    if (process.env.NODE_ENV !== "production") {
-      console.log("✅ Created user:", user);
-    }
-
-    // Don't include sensitive data in response
-    const { email_verification_code, ...userResponse } = user;
-    return { user: userResponse, needsEmailVerification: true };
-  }
-
-  static async sendVerificationEmail(
-    email: string,
-    code: string,
-    name: string
-  ) {
-    try {
-      console.log("📧 EMAIL_USER:", process.env.EMAIL_USER);
-      console.log();
-      console.log("🔑 EMAIL_PASSWORD value:", process.env.EMAIL_PASSWORD); // Temporary debug
-      const nodemailer = require("nodemailer");
-
-      // Fixed: createTransport (not createTransporter)
-      const transporter = nodemailer.createTransport({
-        host: "smtp.gmail.com",
-        port: 587,
-        secure: false,
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASSWORD,
-        },
-      });
-      // Test the connection
-      console.log("🔍 Testing email connection...");
-      await transporter.verify();
-      console.log("✅ Email connection verified", transporter);
-
-      const mailOptions = {
-        from: `"Calo Fitness & Diet" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "Verify Your Email Address - Calo",
-        html: `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Email Verification - Calo</title>
-      <!--[if mso]>
-      <noscript>
-        <xml>
-          <o:OfficeDocumentSettings>
-            <o:PixelsPerInch>96</o:PixelsPerInch>
-          </o:OfficeDocumentSettings>
-        </xml>
-      </noscript>
-      <![endif]-->
-    </head>
-    <body style="margin: 0; padding: 0; background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
-      <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f8f9fa;">
-        <tr>
-          <td align="center" style="padding: 40px 20px;">
-
-            <!-- Main Container -->
-            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); overflow: hidden;">
-
-              <!-- Header Section -->
-              <tr>
-                <td style="background: linear-gradient(135deg, #4ECDC4 0%, #44A08D 100%); padding: 40px 32px; text-align: center;">
-                  <div style="background-color: rgba(255, 255, 255, 0.1); width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; border: 3px solid rgba(255, 255, 255, 0.2);">
-                    <div style="width: 40px; height: 40px; background-color: white; border-radius: 50%; position: relative;">
-                      <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 20px; height: 20px; background: linear-gradient(135deg, #4ECDC4 0%, #44A08D 100%); border-radius: 50%;"></div>
-                    </div>
-                  </div>
-                  <h1 style="color: #ffffff; font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -0.5px;">Calo</h1>
-                  <p style="color: rgba(255, 255, 255, 0.9); font-size: 16px; margin: 8px 0 0 0; font-weight: 400;">Fitness & Diet</p>
-                </td>
-              </tr>
-
-              <!-- Content Section -->
-              <tr>
-                <td style="padding: 48px 32px 32px;">
-
-                  <!-- Greeting -->
-                  <h2 style="color: #1a1a1a; font-size: 24px; font-weight: 600; margin: 0 0 24px 0; line-height: 1.3;">
-                    Welcome, ${name}! 👋
-                  </h2>
-
-                  <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 32px 0;">
-                    Thank you for joining Calo! We're excited to help you on your fitness and nutrition journey. Please verify your email address using the code below.
-                  </p>
-
-                  <!-- Verification Code Container -->
-                  <div style="background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%); border: 2px dashed #cbd5e0; border-radius: 12px; padding: 32px; text-align: center; margin: 32px 0;">
-                    <p style="color: #4a5568; font-size: 14px; margin: 0 0 16px 0; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;">
-                      Verification Code
-                    </p>
-                    <div style="font-family: 'Courier New', monospace; font-size: 36px; font-weight: 700; color: #2d3748; letter-spacing: 8px; margin: 16px 0; text-align: center;">
-                      ${code}
-                    </div>
-                    <p style="color: #718096; font-size: 13px; margin: 16px 0 0 0;">
-                      This code expires in <strong>15 minutes</strong>
-                    </p>
-                  </div>
-
-                  <!-- Instructions -->
-                  <div style="background-color: #f0f9ff; border-left: 4px solid #3b82f6; padding: 20px; margin: 32px 0; border-radius: 0 8px 8px 0;">
-                    <h3 style="color: #1e40af; font-size: 16px; font-weight: 600; margin: 0 0 8px 0;">
-                      📱 What's next?
-                    </h3>
-                    <p style="color: #1e40af; font-size: 14px; line-height: 1.5; margin: 0;">
-                      Enter this code in the Calo app to verify your email and unlock all features including personalized meal plans, workout tracking, and progress analytics.
-                    </p>
-                  </div>
-
-                  <!-- Security Notice -->
-                  <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 32px 0; border-radius: 0 8px 8px 0;">
-                    <h3 style="color: #dc2626; font-size: 16px; font-weight: 600; margin: 0 0 8px 0;">
-                      🔒 Security Notice
-                    </h3>
-                    <p style="color: #dc2626; font-size: 14px; line-height: 1.5; margin: 0;">
-                      If you didn't create an account with Calo, please ignore this email. Never share your verification code with anyone.
-                    </p>
-                  </div>
-
-                </td>
-              </tr>
-
-              <!-- Footer Section -->
-              <tr>
-                <td style="background-color: #f8f9fa; padding: 32px; text-align: center; border-top: 1px solid #e2e8f0;">
-
-                  <!-- Social Links -->
-                  <div style="margin-bottom: 24px;">
-                    <a href="#" style="display: inline-block; margin: 0 8px; width: 40px; height: 40px; background-color: #4ECDC4; border-radius: 50%; text-decoration: none; line-height: 40px; color: white; font-size: 16px;">📧</a>
-                    <a href="#" style="display: inline-block; margin: 0 8px; width: 40px; height: 40px; background-color: #4ECDC4; border-radius: 50%; text-decoration: none; line-height: 40px; color: white; font-size: 16px;">💬</a>
-                    <a href="#" style="display: inline-block; margin: 0 8px; width: 40px; height: 40px; background-color: #4ECDC4; border-radius: 50%; text-decoration: none; line-height: 40px; color: white; font-size: 16px;">🌐</a>
-                  </div>
-
-                  <!-- Company Info -->
-                  <p style="color: #1a1a1a; font-size: 16px; font-weight: 600; margin: 0 0 8px 0;">
-                    Calo - Fitness & Diet
-                  </p>
-                  <p style="color: #718096; font-size: 14px; margin: 0 0 16px 0; line-height: 1.5;">
-                    Your Personal Nutrition & Fitness Assistant<br>
-                    Transform your health, one meal at a time.
-                  </p>
-
-                  <!-- Links -->
-                  <div style="margin: 24px 0;">
-                    <a href="#" style="color: #4ECDC4; text-decoration: none; font-size: 14px; margin: 0 16px; font-weight: 500;">Privacy Policy</a>
-                    <a href="#" style="color: #4ECDC4; text-decoration: none; font-size: 14px; margin: 0 16px; font-weight: 500;">Terms of Service</a>
-                    <a href="#" style="color: #4ECDC4; text-decoration: none; font-size: 14px; margin: 0 16px; font-weight: 500;">Support</a>
-                  </div>
-
-                  <!-- Copyright -->
-                  <p style="color: #a0aec0; font-size: 12px; margin: 20px 0 0 0;">
-                    © 2025 Calo. All rights reserved.<br>
-                    <a href="#" style="color: #a0aec0; text-decoration: none;">Unsubscribe</a> | 
-                    <a href="#" style="color: #a0aec0; text-decoration: none;">Update Preferences</a>
-                  </p>
-
-                </td>
-              </tr>
-
-            </table>
-
-          </td>
-        </tr>
-      </table>
-    </body>
-    </html>
-  `,
-      };
-
-      const result = await transporter.sendMail(mailOptions);
-      console.log(`✅ Verification email sent to ${email}`);
-      console.log("📧 Message ID:", result.messageId);
-
-      // Still log to console for development
-      if (process.env.NODE_ENV !== "production") {
-        console.log(`📧 Verification email for ${email}`);
-        console.log(`👤 Name: ${name}`);
-        console.log(`🔑 Verification Code: ${code}`);
-        console.log(`⏰ Code expires in 15 minutes`);
-      }
-
-      return true;
     } catch (error: any) {
-      console.error("❌ Failed to send verification email:", error, { email });
+      console.error("Avatar upload error:", error);
+      Alert.alert("Error", error.message || "Failed to upload avatar");
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
 
-      // More detailed error logging
-      if (error.code === "EAUTH") {
-        console.error(
-          "🔐 Authentication failed - check your email credentials"
+  const menuSections: MenuSection[] = [
+    {
+      title: t("profile.personal_info") || "Personal Information",
+      items: [
+        {
+          id: "editProfile",
+          title: t("profile.edit_profile") || "Edit Profile",
+          icon: <Edit size={20} color="#2C3E50" />,
+          onPress: () => handleMenuPress("editProfile"),
+        },
+        {
+          id: "changeAvatar",
+          title: "Change Avatar",
+          icon: <Camera size={20} color="#2C3E50" />,
+          onPress: handleAvatarPress,
+        },
+        {
+          id: "personalData",
+          title: t("profile.personal_data") || "Personal Data",
+          icon: <Target size={20} color="#2C3E50" />,
+          onPress: () => handleMenuPress("personalData"),
+        },
+      ],
+    },
+    {
+      title: "Subscription Management",
+      items: [
+        {
+          id: "changePlan",
+          title: "Change Plan",
+          icon: <Edit size={20} color="#2C3E50" />,
+          onPress: handleChangePlan,
+          subtitle: `Current: ${user?.subscription_type || "FREE"}`,
+        },
+        ...(user?.subscription_type !== "FREE"
+          ? [
+              {
+                id: "exitPlan",
+                title: "Exit Current Plan",
+                icon: <LogOut size={20} color="#E74C3C" />,
+                onPress: handleExitPlan,
+                danger: true,
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      title: t("profile.preferences") || "Preferences",
+      items: [
+        {
+          id: "notifications",
+          title: t("profile.notifications") || "Notifications",
+          icon: <Bell size={20} color="#2C3E50" />,
+          rightComponent: (
+            <Switch
+              value={notificationSettings.pushNotifications}
+              onValueChange={() =>
+                handleNotificationToggle("pushNotifications")
+              }
+              trackColor={{ false: "#E9ECEF", true: "#16A085" }}
+              thumbColor={
+                notificationSettings.pushNotifications ? "#FFFFFF" : "#FFFFFF"
+              }
+            />
+          ),
+        },
+        {
+          id: "darkMode",
+          title: "Dark Mode",
+          icon: <Moon size={20} color="#2C3E50" />,
+          rightComponent: (
+            <Switch
+              value={darkMode}
+              onValueChange={handleDarkModeToggle}
+              trackColor={{ false: "#E9ECEF", true: "#16A085" }}
+              thumbColor={darkMode ? "#FFFFFF" : "#FFFFFF"}
+            />
+          ),
+        },
+        {
+          id: "language",
+          title: t("profile.language") || "Language",
+          icon: <Globe size={20} color="#2C3E50" />,
+          subtitle: isRTL ? "עברית" : "English",
+          onPress: () => handleMenuPress("language"),
+        },
+      ],
+    },
+    {
+      title: t("profile.support") || "Support",
+      items: [
+        {
+          id: "support",
+          title: t("profile.support") || "Help Center",
+          icon: <HelpCircle size={20} color="#2C3E50" />,
+          onPress: () => handleMenuPress("support"),
+        },
+        {
+          id: "about",
+          title: t("profile.about") || "About",
+          icon: <User size={20} color="#2C3E50" />,
+          onPress: () => handleMenuPress("about"),
+        },
+      ],
+    },
+    {
+      title: t("profile.privacy") || "Privacy",
+      items: [
+        {
+          id: "privacy",
+          title: t("profile.privacy") || "Privacy Policy",
+          icon: <Shield size={20} color="#2C3E50" />,
+          onPress: () => handleMenuPress("privacy"),
+        },
+      ],
+    },
+    {
+      title: t("profile.account") || "Account",
+      items: [
+        {
+          id: "signOut",
+          title: t("profile.signout") || "Sign Out",
+          icon: <LogOut size={20} color="#E74C3C" />,
+          onPress: handleSignOut,
+          danger: true,
+        },
+      ],
+    },
+  ];
+
+  const renderSectionContent = () => {
+    switch (activeSection) {
+      case "editProfile":
+        return <EditProfile onClose={() => setActiveSection(null)} />;
+      case "notifications":
+        return (
+          <View style={styles.sectionContent}>
+            <Text style={styles.sectionContentTitle}>
+              Notification Settings
+            </Text>
+            {Object.entries(notificationSettings).map(([key, value]) => (
+              <View key={key} style={styles.notificationItem}>
+                <Text style={styles.notificationLabel}>
+                  {key
+                    .replace(/([A-Z])/g, " $1")
+                    .replace(/^./, (str) => str.toUpperCase())}
+                </Text>
+                <Switch
+                  value={value}
+                  onValueChange={() => handleNotificationToggle(key)}
+                  trackColor={{ false: "#E9ECEF", true: "#16A085" }}
+                  thumbColor={value ? "#FFFFFF" : "#FFFFFF"}
+                />
+              </View>
+            ))}
+          </View>
         );
-      } else if (error.code === "ECONNECTION") {
-        console.error("🌐 Connection failed - check your internet connection");
-      }
-
-      // Fallback to console logging if email fails
-      console.log(`📧 FALLBACK - Verification email for ${email}`);
-      console.log(`👤 Name: ${name}`);
-      console.log(`🔑 Verification Code: ${code}`);
-      console.log(`⏰ Code expires in 15 minutes`);
-
-      // Don't throw error - let the signup continue even if email fails
-      return true;
+      case "privacy":
+        return (
+          <View style={styles.sectionContent}>
+            <Text style={styles.sectionContentTitle}>Privacy Settings</Text>
+            <Text style={styles.sectionContentText}>
+              Privacy settings and data management options would be displayed
+              here.
+              {"\n\n"}• Data export and deletion
+              {"\n"}• Privacy preferences
+              {"\n"}• Cookie settings
+              {"\n"}• Third-party data sharing
+            </Text>
+          </View>
+        );
+      case "support":
+        return (
+          <View style={styles.sectionContent}>
+            <Text style={styles.sectionContentTitle}>Help & Support</Text>
+            <Text style={styles.sectionContentText}>
+              Welcome to your nutrition tracking app! Here are some helpful
+              tips:
+              {"\n\n"}• Use the camera to scan your meals for automatic
+              nutrition analysis
+              {"\n"}• Track your daily water intake to stay hydrated
+              {"\n"}• View your progress in the statistics tab
+              {"\n"}• Set up your profile in the questionnaire for personalized
+              recommendations
+            </Text>
+          </View>
+        );
+      case "about":
+        return (
+          <View style={styles.sectionContent}>
+            <Text style={styles.sectionContentTitle}>About This App</Text>
+            <Text style={styles.sectionContentText}>
+              Nutrition Tracker v1.0.0
+              {"\n\n"}A comprehensive nutrition tracking application that helps
+              you monitor your daily food intake, track your health goals, and
+              maintain a balanced diet.
+              {"\n\n"}
+              Features:
+              {"\n"}• AI-powered meal analysis
+              {"\n"}• Comprehensive nutrition tracking
+              {"\n"}• Goal setting and progress monitoring
+              {"\n"}• Personalized recommendations
+            </Text>
+          </View>
+        );
+      default:
+        return null;
     }
-  }
+  };
 
-  static async verifyEmail(email: string, code: string) {
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: {
-        ...userSelectFields,
-        email_verified: true,
-        email_verification_code: true,
-        email_verification_expires: true,
-      },
-    });
+  const formatDate = (dateString: string) => {
+    if (!dateString) return "Not set";
+    return new Date(dateString).toLocaleDateString();
+  };
 
-    if (!user) {
-      throw new Error("User not found");
+  const getSubscriptionBadge = (type: string) => {
+    switch (type) {
+      case "PREMIUM":
+        return { color: "#FFD700", text: "PREMIUM" };
+      case "GOLD":
+        return { color: "#FF6B35", text: "GOLD" };
+      default:
+        return { color: "#8E8E93", text: "FREE" };
     }
-
-    if (user.email_verified) {
-      throw new Error("Email already verified");
-    }
-
-    if (
-      !user.email_verification_expires ||
-      user.email_verification_expires < new Date()
-    ) {
-      throw new Error("Verification code expired");
-    }
-
-    if (user.email_verification_code !== code) {
-      throw new Error("Invalid verification code");
-    }
-
-    const updatedUser = await prisma.user.update({
-      where: { email },
-      data: {
-        email_verified: true,
-        email_verification_code: null,
-        email_verification_expires: null,
-      },
-      select: userSelectFields,
-    });
-
-    const token = generateToken({
-      user_id: updatedUser.user_id,
-      email: updatedUser.email,
-    });
-
-    await prisma.session.create({
-      data: {
-        user_id: updatedUser.user_id,
-        token,
-        expiresAt: getSessionExpiryDate(),
-      },
-    });
-
-    return { user: updatedUser, token };
-  }
-
-  static async signIn(data: SignInInput) {
-    const { email, password } = data;
-
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) throw new Error("Invalid email or password");
-
-    const isValid = await bcrypt.compare(password, user.password_hash);
-    if (!isValid) throw new Error("Invalid email or password");
-
-    const token = generateToken({ user_id: user.user_id, email: user.email });
-
-    await prisma.session.create({
-      data: {
-        user_id: user.user_id,
-        token,
-        expiresAt: getSessionExpiryDate(),
-      },
-    });
-
-    const { password_hash: _, ...userWithoutPassword } = user;
-    return { user: userWithoutPassword, token };
-  }
-
-  static async verifyToken(token: string) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as {
-        user_id: string;
-        email: string;
-      };
-
-      if (
-        !decoded ||
-        typeof decoded !== "object" ||
-        !("user_id" in decoded) ||
-        !("email" in decoded)
-      ) {
-        throw new Error("Invalid token payload");
-      }
-
-      const session = await prisma.session.findUnique({
-        where: { token },
-        include: {
-          user: { select: userSelectFields },
-        },
-      });
-
-      if (!session || session.expiresAt < new Date()) {
-        throw new Error("Session expired");
-      }
-
-      return session.user;
-    } catch {
-      throw new Error("Invalid token");
-    }
-  }
-
-  static async signOut(token: string) {
-    await prisma.session.deleteMany({ where: { token } });
-  }
-  static async sendPasswordResetEmail(email: string): Promise<void> {
-    console.log("🔄 Sending password reset email to:", email);
-
-    // Check if user exists
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    // Generate reset code (same as email verification)
-    const resetCode = crypto.randomInt(100000, 999999).toString();
-    const resetExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes (same as email verification)
-
-    // Store reset code in database temporarily
-    await prisma.user.update({
-      where: { email },
-      data: {
-        password_reset_code: resetCode,
-        password_reset_expires: resetExpires,
-      },
-    });
-
-    // Send password reset email
-    await this.sendPasswordResetEmailTemplate(
-      email,
-      resetCode,
-      user.name || "User"
-    );
-
-    console.log("✅ Password reset code generated and sent");
-  }
-
-  static async sendPasswordResetEmailTemplate(
-    email: string,
-    code: string,
-    name: string
-  ) {
-    try {
-      const nodemailer = require("nodemailer");
-
-      const transporter = nodemailer.createTransport({
-        host: "smtp.gmail.com",
-        port: 587,
-        secure: false,
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASSWORD,
-        },
-      });
-
-      // Test the connection
-      console.log("🔍 Testing email connection...");
-      await transporter.verify();
-      console.log("✅ Email connection verified");
-
-      const mailOptions = {
-        from: `"Calo Fitness & Diet" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "Password Reset Code - Calo",
-        html: `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Password Reset - Calo</title>
-      <!--[if mso]>
-      <noscript>
-        <xml>
-          <o:OfficeDocumentSettings>
-            <o:PixelsPerInch>96</o:PixelsPerInch>
-          </o:OfficeDocumentSettings>
-        </xml>
-      </noscript>
-      <![endif]-->
-    </head>
-    <body style="margin: 0; padding: 0; background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
-      <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f8f9fa;">
-        <tr>
-          <td align="center" style="padding: 40px 20px;">
-
-            <!-- Main Container -->
-            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); overflow: hidden;">
-
-              <!-- Header Section -->
-              <tr>
-                <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 32px; text-align: center; position: relative;">
-                  <!-- Background Pattern -->
-                  <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-image: radial-gradient(circle at 20% 50%, rgba(255, 255, 255, 0.1) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.1) 0%, transparent 50%); opacity: 0.5;"></div>
-
-                  <!-- Logo/Icon -->
-                  <div style="background-color: rgba(255, 255, 255, 0.15); width: 90px; height: 90px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; border: 3px solid rgba(255, 255, 255, 0.3); position: relative;">
-                    <div style="width: 50px; height: 50px; background-color: white; border-radius: 50%; position: relative;">
-                      <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 24px; height: 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%;"></div>
-                      <div style="position: absolute; top: 15px; left: 15px; width: 8px; height: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 2px; transform: rotate(45deg);"></div>
-                    </div>
-                  </div>
-
-                  <h1 style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 0; letter-spacing: -0.5px; position: relative;">Calo</h1>
-                  <p style="color: rgba(255, 255, 255, 0.9); font-size: 16px; margin: 8px 0 0 0; font-weight: 400; position: relative;">Password Reset</p>
-                </td>
-              </tr>
-
-              <!-- Content Section -->
-              <tr>
-                <td style="padding: 48px 32px 32px;">
-
-                  <!-- Greeting -->
-                  <div style="text-align: center; margin-bottom: 32px;">
-                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center;">
-                      <span style="color: white; font-size: 24px;">🔑</span>
-                    </div>
-                    <h2 style="color: #1a1a1a; font-size: 26px; font-weight: 600; margin: 0 0 8px 0; line-height: 1.3;">
-                      Reset Your Password
-                    </h2>
-                    <p style="color: #4a5568; font-size: 16px; margin: 0;">
-                      Hello <strong>${name}</strong>! We received a request to reset your password.
-                    </p>
-                  </div>
-
-                  <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 32px 0; text-align: center;">
-                    Enter the verification code below in the Calo app to create a new password for your account.
-                  </p>
-
-                  <!-- Verification Code Container -->
-                  <div style="background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%); border: 2px solid #e2e8f0; border-radius: 16px; padding: 40px 32px; text-align: center; margin: 32px 0; position: relative; overflow: hidden;">
-                    <!-- Background decoration -->
-                    <div style="position: absolute; top: -50px; right: -50px; width: 100px; height: 100px; background: linear-gradient(135deg, #667eea20 0%, #764ba220 100%); border-radius: 50%; opacity: 0.5;"></div>
-                    <div style="position: absolute; bottom: -30px; left: -30px; width: 60px; height: 60px; background: linear-gradient(135deg, #667eea20 0%, #764ba220 100%); border-radius: 50%; opacity: 0.3;"></div>
-
-                    <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; position: relative;">
-                      Your Reset Code
-                    </p>
-
-                    <!-- Code Display -->
-                    <div style="background-color: white; border: 2px solid #e2e8f0; border-radius: 12px; padding: 24px; margin: 20px 0; position: relative;">
-                      <div style="font-family: 'Courier New', monospace; font-size: 42px; font-weight: 700; color: #2d3748; letter-spacing: 10px; margin: 0; text-align: center; line-height: 1;">
-                        ${code}
-                      </div>
-                    </div>
-
-                    <div style="display: flex; align-items: center; justify-content: center; margin-top: 20px; position: relative;">
-                      <div style="width: 20px; height: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; margin-right: 8px; display: flex; align-items: center; justify-content: center;">
-                        <span style="color: white; font-size: 12px;">⏰</span>
-                      </div>
-                      <p style="color: #718096; font-size: 14px; margin: 0; font-weight: 500;">
-                        This code expires in <strong style="color: #4a5568;">15 minutes</strong>
-                      </p>
-                    </div>
-                  </div>
-
-                  <!-- Instructions -->
-                  <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-left: 4px solid #3b82f6; padding: 24px; margin: 32px 0; border-radius: 0 12px 12px 0; position: relative;">
-                    <div style="position: absolute; top: 20px; right: 20px; width: 30px; height: 30px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-                      <span style="color: white; font-size: 14px;">📱</span>
-                    </div>
-                    <h3 style="color: #1e40af; font-size: 16px; font-weight: 600; margin: 0 0 8px 0;">
-                      How to use this code:
-                    </h3>
-                    <ul style="color: #1e40af; font-size: 14px; line-height: 1.6; margin: 0; padding-left: 20px;">
-                      <li>Open the Calo app on your device</li>
-                      <li>Enter this 6-digit code when prompted</li>
-                      <li>Create your new secure password</li>
-                      <li>Start using your account immediately</li>
-                    </ul>
-                  </div>
-
-                  <!-- Security Notice -->
-                  <div style="background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border-left: 4px solid #ef4444; padding: 24px; margin: 32px 0; border-radius: 0 12px 12px 0; position: relative;">
-                    <div style="position: absolute; top: 20px; right: 20px; width: 30px; height: 30px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-                      <span style="color: white; font-size: 14px;">🔒</span>
-                    </div>
-                    <h3 style="color: #dc2626; font-size: 16px; font-weight: 600; margin: 0 0 8px 0;">
-                      Security Notice
-                    </h3>
-                    <p style="color: #dc2626; font-size: 14px; line-height: 1.5; margin: 0;">
-                      <strong>Important:</strong> If you didn't request this password reset, please ignore this email and contact our support team. Never share your reset code with anyone.
-                    </p>
-                  </div>
-
-                </td>
-              </tr>
-
-              <!-- Footer Section -->
-              <tr>
-                <td style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 32px; text-align: center; border-top: 1px solid #e2e8f0;">
-
-                  <!-- Social Links -->
-                  <div style="margin-bottom: 24px;">
-                    <a href="#" style="display: inline-block; margin: 0 8px; width: 44px; height: 44px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; text-decoration: none; line-height: 44px; color: white; font-size: 16px; transition: transform 0.2s;">📧</a>
-                    <a href="#" style="display: inline-block; margin: 0 8px; width: 44px; height: 44px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; text-decoration: none; line-height: 44px; color: white; font-size: 16px; transition: transform 0.2s;">💬</a>
-                    <a href="#" style="display: inline-block; margin: 0 8px; width: 44px; height: 44px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; text-decoration: none; line-height: 44px; color: white; font-size: 16px; transition: transform 0.2s;">🌐</a>
-                  </div>
-
-                  <!-- Company Info -->
-                  <div style="background-color: white; border-radius: 12px; padding: 20px; margin: 20px 0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);">
-                    <h3 style="color: #1a1a1a; font-size: 18px; font-weight: 600; margin: 0 0 8px 0;">
-                      Calo - Fitness & Diet
-                    </h3>
-                    <p style="color: #718096; font-size: 14px; margin: 0 0 16px 0; line-height: 1.5;">
-                      Your Personal Nutrition & Fitness Assistant<br>
-                      <strong style="color: #4a5568;">Transform your health, one meal at a time.</strong>
-                    </p>
-
-                    <!-- App Download Buttons -->
-                    <div style="margin: 16px 0;">
-                      <span style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 500; margin: 0 4px;">📱 Available on iOS & Android</span>
-                    </div>
-                  </div>
-
-                  <!-- Links -->
-                  <div style="margin: 24px 0;">
-                    <a href="#" style="color: #667eea; text-decoration: none; font-size: 14px; margin: 0 16px; font-weight: 500; padding: 8px 12px; border-radius: 6px; background-color: rgba(102, 126, 234, 0.1);">Privacy Policy</a>
-                    <a href="#" style="color: #667eea; text-decoration: none; font-size: 14px; margin: 0 16px; font-weight: 500; padding: 8px 12px; border-radius: 6px; background-color: rgba(102, 126, 234, 0.1);">Terms of Service</a>
-                    <a href="#" style="color: #667eea; text-decoration: none; font-size: 14px; margin: 0 16px; font-weight: 500; padding: 8px 12px; border-radius: 6px; background-color: rgba(102, 126, 234, 0.1);">Support</a>
-                  </div>
-
-                  <!-- Copyright -->
-                  <p style="color: #a0aec0; font-size: 12px; margin: 20px 0 0 0; line-height: 1.5;">
-                    © 2025 Calo. All rights reserved.<br>
-                    <a href="#" style="color: #a0aec0; text-decoration: none;">Unsubscribe</a> | 
-                    <a href="#" style="color: #a0aec0; text-decoration: none;">Update Preferences</a>
-                  </p>
-
-                </td>
-              </tr>
-
-            </table>
-
-          </td>
-        </tr>
-      </table>
-    </body>
-    </html>
-  `,
-      };
-
-      const result = await transporter.sendMail(mailOptions);
-      console.log(`✅ Password reset email sent to ${email}`);
-      console.log("📧 Message ID:", result.messageId);
-
-      // Fallback to console logging for development
-      if (process.env.NODE_ENV !== "production") {
-        console.log(`📧 Password reset email for ${email}`);
-        console.log(`👤 Name: ${name}`);
-        console.log(`🔑 Reset Code: ${code}`);
-        console.log(`⏰ Code expires in 15 minutes`);
-      }
-
-      return true;
-    } catch (error: any) {
-      console.error("❌ Failed to send password reset email:", error);
-
-      // Fallback to console logging if email fails
-      console.log(`📧 FALLBACK - Password reset code for ${email}`);
-      console.log(`👤 Name: ${name}`);
-      console.log(`🔑 Reset Code: ${code}`);
-      console.log(`⏰ Code expires in 15 minutes`);
-
-      // Don't throw error - let the process continue even if email fails
-      return true;
-    }
-  }
-
-  static async verifyResetCode(email: string, code: string): Promise<string> {
-    console.log("🔒 Verifying reset code for:", email);
-
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    if (!user.password_reset_code || !user.password_reset_expires) {
-      throw new Error("No reset code found");
-    }
-
-    if (user.password_reset_code !== code) {
-      throw new Error("Invalid reset code");
-    }
-
-    if (new Date() > user.password_reset_expires) {
-      throw new Error("Reset code has expired");
-    }
-
-    // Generate simple reset token (like email verification)
-    const resetToken = jwt.sign(
-      { userId: user.user_id, email: user.email, type: "password_reset" },
-      JWT_SECRET,
-      { expiresIn: "15m" }
-    );
-
-    console.log("✅ Reset code verified, token generated");
-    return resetToken;
-  }
-
-  static async resetPassword(
-    token: string,
-    newPassword: string
-  ): Promise<void> {
-    console.log("🔑 Resetting password with token");
-
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
-
-      if (decoded.type !== "password_reset") {
-        throw new Error("Invalid reset token");
-      }
-
-      const user = await prisma.user.findUnique({
-        where: { email: decoded.email },
-      });
-
-      if (!user) {
-        throw new Error("User not found");
-      }
-
-      // Hash new password
-      const hashedPassword = await bcrypt.hash(newPassword, 12);
-
-      // Update password and clear reset fields (like email verification clears verification fields)
-      await prisma.user.update({
-        where: { email: decoded.email },
-        data: {
-          password_hash: hashedPassword,
-          password_reset_code: null,
-          password_reset_expires: null,
-        },
-      });
-
-      // Invalidate all existing sessions for security
-      await prisma.session.deleteMany({
-        where: { user_id: user.user_id },
-      });
-
-      console.log("✅ Password reset successfully for:", decoded.email);
-    } catch (error) {
-      console.error("💥 Password reset error:", error);
-      throw new Error("Invalid or expired reset token");
-    }
-  }
-
-  // Add method to verify token validity (for frontend validation)
-  static async verifyPasswordResetToken(token: string) {
-    try {
-      const decoded = verifyPasswordResetToken(token);
-
-      // Optional: Check if user still exists
-      const user = await prisma.user.findUnique({
-        where: { email: decoded.email },
-        select: { email: true, email_verified: true },
-      });
-
-      if (!user || !user.email_verified) {
-        throw new Error("User not found or email not verified");
-      }
-
-      return { valid: true, email: decoded.email };
-    } catch (error) {
-      return {
-        valid: false,
-        error: error instanceof Error ? error.message : "Invalid token",
-      };
-    }
-  }
-  static async getRolePermissions(role: string) {
-    const permissions = {
-      FREE: { dailyRequests: 10 },
-      PREMIUM: { dailyRequests: 50 },
-      GOLD: { dailyRequests: -1 },
-    };
-
-    return permissions[role as keyof typeof permissions] ?? permissions.FREE;
-  }
-
-  static getCookieOptions() {
-    return {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax" as const,
-      maxAge: SESSION_EXPIRES_DAYS * 24 * 60 * 60 * 1000,
-      path: "/",
-    };
-  }
+  };
+
+  const profileStats = [
+    {
+      label: "AI Requests",
+      value: (user?.ai_requests_count || 0).toString(),
+      icon: <Target size={20} color="#E74C3C" />,
+    },
+    {
+      label: "Member Since",
+      value: formatDate(user?.created_at ?? ""),
+      icon: <Scale size={20} color="#9B59B6" />,
+    },
+    {
+      label: "Profile Status",
+      value: user?.is_questionnaire_completed ? "Complete" : "Incomplete",
+      icon: <Activity size={20} color="#16A085" />,
+    },
+  ];
+  console.log(user);
+  return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#16A085" />
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <View style={[styles.header, isRTL && styles.headerRTL]}>
+          <View>
+            <Text style={[styles.title, isRTL && styles.titleRTL]}>
+              {t("profile.title") || "Profile"}
+            </Text>
+            <Text style={[styles.subtitle, isRTL && styles.subtitleRTL]}>
+              {t("profile.subtitle") || "Manage your account and preferences"}
+            </Text>
+          </View>
+        </View>
+
+        {/* Profile Card */}
+        <View style={styles.profileCard}>
+          <LinearGradient
+            colors={["#16A085", "#1ABC9C"]}
+            style={styles.profileGradient}
+          >
+            <TouchableOpacity
+              style={styles.profileAvatar}
+              onPress={handleAvatarPress}
+              disabled={isUploadingAvatar}
+            >
+              <Image
+                source={{
+                  uri:
+                    user?.avatar_url ||
+                    `https://via.placeholder.com/80x80/FFFFFF/16A085?text=${(
+                      user?.name || "U"
+                    )
+                      .charAt(0)
+                      .toUpperCase()}`,
+                }}
+                style={styles.avatarImage}
+                onError={(error) => {
+                  console.log("🖼️ Avatar image load error:", error.nativeEvent.error);
+                  console.log("🖼️ Attempted to load URL:", user?.avatar_url);
+                }}
+                onLoad={() => {
+                  console.log("✅ Avatar image loaded successfully");
+                }}
+              />
+              <View style={styles.avatarOverlay}>
+                {isUploadingAvatar ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Camera size={16} color="#FFFFFF" />
+                )}
+              </View>
+            </TouchableOpacity>
+            <View style={[styles.profileInfo, isRTL && styles.profileInfoRTL]}>
+              <Text
+                style={[styles.profileName, isRTL && styles.profileNameRTL]}
+              >
+                {user?.name || "User Name"}
+              </Text>
+              <Text
+                style={[styles.profileEmail, isRTL && styles.profileEmailRTL]}
+              >
+                {user?.email || "user@example.com"}
+              </Text>
+              <View
+                style={[
+                  styles.subscriptionBadge,
+                  {
+                    backgroundColor: getSubscriptionBadge(
+                      user?.subscription_type ?? ""
+                    ).color,
+                  },
+                ]}
+              >
+                <Text style={styles.subscriptionText}>
+                  {getSubscriptionBadge(user?.subscription_type ?? "").text}
+                </Text>
+              </View>
+            </View>
+          </LinearGradient>
+        </View>
+
+        {/* Profile Stats */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>
+            {t("profile.stats") || "Statistics"}
+          </Text>
+          <View style={styles.statsContainer}>
+            {profileStats.map((stat, index) => (
+              <View key={index} style={styles.statCard}>
+                <LinearGradient
+                  colors={["#F8F9FA", "#FFFFFF"]}
+                  style={styles.statGradient}
+                >
+                  <View style={styles.statHeader}>
+                    {stat.icon}
+                    <Text
+                      style={[styles.statLabel, isRTL && styles.statLabelRTL]}
+                    >
+                      {stat.label}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[styles.statValue, isRTL && styles.statValueRTL]}
+                  >
+                    {stat.value}
+                  </Text>
+                </LinearGradient>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        {/* Menu Sections */}
+        {menuSections.map((section, sectionIndex) => (
+          <View key={sectionIndex} style={styles.section}>
+            <Text
+              style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}
+            >
+              {section.title}
+            </Text>
+            <View style={styles.menuContainer}>
+              {section.items.map((item, itemIndex) => (
+                <View key={itemIndex}>
+                  <TouchableOpacity
+                    style={[
+                      styles.menuItem,
+                      activeSection === item.id && styles.menuItemActive,
+                    ]}
+                    onPress={item.onPress}
+                    activeOpacity={0.8}
+                  >
+                    <View
+                      style={[
+                        styles.menuItemLeft,
+                        isRTL && styles.menuItemLeftRTL,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.menuItemIcon,
+                          item.danger && styles.menuItemIconDanger,
+                        ]}
+                      >
+                        {item.icon}
+                      </View>
+                      <View>
+                        <Text
+                          style={[
+                            styles.menuItemTitle,
+                            item.danger && styles.menuItemTitleDanger,
+                            isRTL && styles.menuItemTitleRTL,
+                          ]}
+                        >
+                          {item.title}
+                        </Text>
+                        {item.subtitle && (
+                          <Text
+                            style={[
+                              styles.menuItemSubtitle,
+                              isRTL && styles.menuItemSubtitleRTL,
+                            ]}
+                          >
+                            {item.subtitle}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                    <View style={styles.menuItemRight}>
+                      {item.rightComponent ||
+                        (isRTL ? (
+                          <ChevronRight size={20} color="#BDC3C7" />
+                        ) : (
+                          <ChevronLeft size={20} color="#BDC3C7" />
+                        ))}
+                    </View>
+                  </TouchableOpacity>
+
+  level: true,
+  current_xp: true,
+  total_points: true,
+  current_streak: true,
+  best_streak: true,
+  total_complete_days: true,
+  last_complete_date: true,
+  active_meal_plan_id: true,
+  active_menu_id: true,
+                  {/* Render section content */}
+                  {activeSection === item.id && (
+                    <View style={styles.sectionContent}>
+                      {renderSectionContent()}
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+          </View>
+        ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#F8F9FA",
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+  },
+  headerRTL: {
+    flexDirection: "row-reverse",
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: "bold",
+    color: "#2C3E50",
+  },
+  titleRTL: {
+    textAlign: "right",
+  },
+  subtitle: {
+    fontSize: 16,
+    color: "#7F8C8D",
+    marginTop: 4,
+  },
+  subtitleRTL: {
+    textAlign: "right",
+  },
+  headerIcons: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  languageButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#FFFFFF",
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  profileCard: {
+    marginHorizontal: 20,
+    marginBottom: 24,
+    borderRadius: 20,
+    overflow: "hidden",
+    elevation: 8,
+    shadowColor: "#16A085",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+  },
+  profileGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 24,
+  },
+  profileAvatar: {
+    position: "relative",
+    marginRight: 20,
+  },
+  avatarImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 3,
+    borderColor: "rgba(255,255,255,0.3)",
+  },
+  avatarOverlay: {
+    position: "absolute",
+    bottom: 2,
+    right: 2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    borderWidth: 2,
+    borderColor: "white",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  profileInfo: {
+    flex: 1,
+  },
+  profileInfoRTL: {
+    alignItems: "flex-end",
+  },
+  profileName: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#FFFFFF",
+  },
+  profileNameRTL: {
+    textAlign: "right",
+  },
+  profileEmail: {
+    fontSize: 16,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 4,
+  },
+  profileEmailRTL: {
+    textAlign: "right",
+  },
+  subscriptionBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: "flex-start",
+    marginTop: 8,
+  },
+  subscriptionText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  section: {
+    paddingHorizontal: 20,
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#2C3E50",
+    marginBottom: 16,
+  },
+  sectionTitleRTL: {
+    textAlign: "right",
+  },
+  statsContainer: {
+    gap: 12,
+  },
+  statCard: {
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+  statGradient: {
+    padding: 16,
+  },
+  statHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  statLabel: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#2C3E50",
+    marginLeft: 12,
+  },
+  statLabelRTL: {
+    marginLeft: 0,
+    marginRight: 12,
+    textAlign: "right",
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#16A085",
+  },
+  statValueRTL: {
+    textAlign: "right",
+  },
+  menuContainer: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    overflow: "hidden",
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F8F9FA",
+  },
+  menuItemActive: {
+    backgroundColor: "#F8F9FA",
+  },
+  menuItemLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  menuItemLeftRTL: {
+    flexDirection: "row-reverse",
+  },
+  menuItemIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F8F9FA",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 16,
+  },
+  menuItemIconDanger: {
+    backgroundColor: "#FCE4EC",
+  },
+  menuItemTitle: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#2C3E50",
+  },
+  menuItemTitleDanger: {
+    color: "#E74C3C",
+  },
+  menuItemTitleRTL: {
+    textAlign: "right",
+  },
+  menuItemSubtitle: {
+    fontSize: 14,
+    color: "#7F8C8D",
+    marginTop: 2,
+  },
+  menuItemSubtitleRTL: {
+    textAlign: "right",
+  },
+  menuItemRight: {
+    marginLeft: 12,
+  },
+  sectionContent: {
+    padding: 20,
+    backgroundColor: "#f8f9fa",
+    borderTopWidth: 1,
+    borderTopColor: "#e9ecef",
+  },
+  sectionContentTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#2C3E50",
+    marginBottom: 16,
+  },
+  sectionContentText: {
+    fontSize: 14,
+    color: "#6b7280",
+    lineHeight: 20,
+  },
+  notificationItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  notificationLabel: {
+    fontSize: 16,
+    color: "#374151",
+    flex: 1,
+  },
+});
