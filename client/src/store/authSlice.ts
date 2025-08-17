@@ -220,7 +220,8 @@ const authSlice = createSlice({
         currentUserData.email_verified !== newUserData.email_verified ||
         currentUserData.subscription_type !== newUserData.subscription_type ||
         currentUserData.is_questionnaire_completed !==
-          newUserData.is_questionnaire_completed
+          newUserData.is_questionnaire_completed ||
+        currentUserData.avatar_url !== newUserData.avatar_url
       ) {
         state.user = newUserData;
         state.isAuthenticated = true;

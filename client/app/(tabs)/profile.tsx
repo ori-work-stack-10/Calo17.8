@@ -243,6 +243,7 @@ export default function ProfileScreen() {
           },
         });
 
+        console.log("✅ Avatar updated in Redux store:", response.avatar_url?.substring(0, 50) + "...");
         Alert.alert("Success", "Profile picture updated successfully!");
       } else {
         throw new Error(response.error || "Failed to upload avatar");
@@ -538,6 +539,13 @@ export default function ProfileScreen() {
                       .toUpperCase()}`,
                 }}
                 style={styles.avatarImage}
+                onError={(error) => {
+                  console.log("🖼️ Avatar image load error:", error.nativeEvent.error);
+                  console.log("🖼️ Attempted to load URL:", user?.avatar_url);
+                }}
+                onLoad={() => {
+                  console.log("✅ Avatar image loaded successfully");
+                }}
               />
               <View style={styles.avatarOverlay}>
                 {isUploadingAvatar ? (

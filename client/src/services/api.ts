@@ -497,6 +497,7 @@ export const userAPI = {
 
       if (response.data.success) {
         console.log("✅ Avatar uploaded successfully");
+        console.log("🖼️ Avatar URL received:", response.data.avatar_url);
         return response.data;
       }
 

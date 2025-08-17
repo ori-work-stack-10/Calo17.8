@@ -92,6 +92,7 @@ router.post("/avatar", authenticateToken, async (req: AuthRequest, res) => {
         email: true,
         name: true,
         avatar_url: true,
+        avatar_url: true,
         subscription_type: true,
         birth_date: true,
         ai_requests_count: true,
@@ -100,6 +101,12 @@ router.post("/avatar", authenticateToken, async (req: AuthRequest, res) => {
     });
 
     console.log("✅ Avatar uploaded successfully for user:", userId);
+    console.log("🖼️ Avatar URL saved:", avatarUrl.substring(0, 50) + "...");
+    console.log("🔍 Updated user object:", {
+      user_id: updatedUser.user_id,
+      avatar_url: updatedUser.avatar_url ? "Present" : "Missing",
+      avatar_length: updatedUser.avatar_url?.length || 0,
+    });
 
     res.json({
       success: true,
